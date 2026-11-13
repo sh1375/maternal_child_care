@@ -1,0 +1,831 @@
+# مستند تغییرات سامانه Maternal Child Care
+
+این سند مرجع اصلی ثبت تغییرات پروژه است. هدف فقط نگهداری یک فهرست کوتاه از Commitها نیست؛ هر Change باید توضیح دهد چرا تغییر لازم بوده، قبل از آن سیستم چگونه کار می‌کرده، چه چیزی به چه چیزی تبدیل شده، چگونه اجرا شده و چه مقدار از آن واقعاً Validation شده است.
+
+> مسیر کار: Inspect → Requirement / Root Cause → Minimal Design → Implement → Validate → Document
+
+## قواعد ثابت
+
+1. فقط درخواست اولیه کاربر اجرا می‌شود و Feature خارج از Scope اضافه نمی‌شود.
+2. Repository باید تا جای ممکن Data Access باشد و Business/Retrieval Logic در Service بماند؛ این تفکیک فقط در جاهایی انجام می‌شود که خود درخواست اولیه نیاز داشته است.
+3. تغییر دیتابیس فقط با فایل Migration جدید انجام می‌شود؛ Dump تاریخی ویرایش نمی‌شود.
+4. نتیجه تست واقعی از نتیجه مورد انتظار جدا نوشته می‌شود.
+5. اگر تست End-to-End به credential یا محیط واقعی وابسته باشد، محدودیت صریحاً ثبت می‌شود.
+
+---
+
+# گزارش تغییرات
+
+## MCC-CHANGE-000 — ایجاد سیستم مستندسازی تغییرات
+
+### تاریخ
+2026-10-15
+
+### مسئله
+پیش از شروع توسعه، مرجعی برای اینکه بعداً مشخص باشد «چه چیزی چرا تغییر کرده» وجود نداشت.
+
+### تغییر
+`docs/CHANGE_LOG.md` ایجاد شد.
+
+### Before → After
+
+**Before:** فقط README برای معرفی پروژه وجود داشت.
+
+**After:** README برای معرفی پروژه باقی ماند و CHANGE_LOG به مرجع آموزشی تغییرات فنی تبدیل شد.
+
+### Validation
+ایجاد فایل روی `main` و قابلیت خواندن آن بررسی شد.
+
+---
+
+## MCC-CHANGE-001 — اصلاح Roadmap و قفل کردن Scope روی درخواست اولیه
+
+### تاریخ
+2026-10-15
+
+### مسئله
+نسخه اولیه Roadmap چند فعالیت عمومی مثل Audit/Hardening مستقل داشت که الزام مستقیم درخواست کاربر نبود.
+
+### تغییر
+`docs/IMPLEMENTATION_ROADMAP.md` فقط حول نیازهای اصلی بازنویسی شد:
+
+- AI/RAG و جداسازی Data Access
+- OTP/Kavenegar
+- محتوای نوزاد/کودک و Crawler
+- حذف تبلیغات گهواره
+- Profile/Personalization/Logging
+- Doctor Contact و Reminder بله
+- Admin Panel
+
+### نتیجه
+Roadmap دیگر مجوز انجام کار جانبی خارج از درخواست کاربر نیست.
+
+---
+
+## MCC-CHANGE-002 — ایجاد مرز QueryPreprocessor و KnowledgeRetriever
+
+### تاریخ
+2026-10-15
+
+### مسئله
+مسیر AI مستقیماً از endpoint وارد `AiKnowledgeRepository` می‌شد و Repository علاوه بر SQL، preprocessing و retrieval logic هم انجام می‌داد.
+
+### فایل‌ها
+
+- Added: `app/Services/QueryPreprocessor.php`
+- Added: `app/Services/KnowledgeRetriever.php`
+- Updated: `public/ai-qa-ask.php`
+
+### Before → After
+
+**Before**
+
+`Endpoint → AiKnowledgeRepository → LlmService`
+
+**After**
+
+`Endpoint → KnowledgeRetriever → QueryPreprocessor + AiKnowledgeRepository → LlmService`
+
+### پیاده‌سازی
+
+`QueryPreprocessor` در اولین گام این موارد را یکدست کرد:
+
+- `ي / ى → ی`
+- `ك → ک`
+- اعداد فارسی/عربی → لاتین
+- نیم‌فاصله → فاصله
+- whitespace تکراری → یک فاصله
+
+### نتیجه
+endpoint دیگر مستقیم به Repository وابسته نیست و مرز Retriever مورد درخواست ایجاد شد.
+
+---
+
+## MCC-CHANGE-003 — تکمیل جداسازی AI Logic از Data Access
+
+### تاریخ
+2026-10-15
+
+### مسئله
+بعد از Change قبلی هنوز keyword extraction، stemming، synonym، تشخیص سن/جنسیت، scoring، snippet و Context Building داخل Repository بودند.
+
+### تصمیم
+سه مسئولیت مستقل شد:
+
+- `QueryPreprocessor` → تحلیل Query
+- `AiKnowledgeRepository` → فقط Query و Row خام
+- `KnowledgeRetriever` → انتخاب منابع، scoring/ranking و ساخت Context
+
+### QueryPreprocessor
+موارد زیر از Repository خارج شدند:
+
+- STOPWORDS
+- light stemming
+- synonym expansion
+- تشخیص سن بر حسب ماه
+- تشخیص جنسیت
+- نرمال‌سازی اعداد فارسی/عربی
+
+WORD_NUMBERS از ۱ تا ۲۰ تکمیل شد.
+
+### AiKnowledgeRepository
+متدهای Data Access ایجاد شدند، از جمله:
+
+- `findFaqs()`
+- `findArticles()`
+- `findPregnancyNutrition()`
+- `findPregnancyWeeks()`
+- `findPregnancyWarningSigns()`
+- `findPregnancyExercises()`
+- `findPregnancySupplements()`
+- `findMilestonesByAge()`
+- `findMilestonesByKeywords()`
+- `findGrowthByAgeAndGender()`
+
+Repository دیگر Context Block تولید نمی‌کند.
+
+### KnowledgeRetriever
+این لایه اکنون مسئول است:
+
+- source selection
+- scoring/ranking
+- محدود کردن نتایج هر source
+- HTML → plain text برای article retrieval
+- انتخاب snippet مرتبط
+- ساخت Context Block نهایی
+- سقف کلی ۱۲ block
+
+### Validation
+ساختار نهایی روی `main` بازخوانی شد. Syntax `QueryPreprocessor` با `php -l` بدون خطا بود. تست runtime کامل در محیط Validation به دلیل نبود extension `mbstring` ممکن نبود؛ این وابستگی از قبل در پروژه وجود داشته است.
+
+---
+
+## MCC-CHANGE-004 — اصلاح Workflow OTP و اتصال صریح Kavenegar SMS
+
+### تاریخ
+2026-10-15
+
+### وضعیت واقعی قبل از تغییر
+پروژه از قبل این اجزا را داشت:
+
+- `AuthService`
+- `OtpRepository`
+- `KavenegarService`
+- `auth-send-otp.php`
+- `auth-verify-otp.php`
+- UI کامل OTP در `auth-modal.js`
+- جدول `otp_verifications`
+
+پس OTP از صفر بازنویسی نشد.
+
+### Root Cause پیدا شده
+ترتیب قبلی `requestOtp()` چنین بود:
+
+`generate → invalidate previous → persist new OTP → send SMS`
+
+اگر Kavenegar شکست می‌خورد:
+
+1. OTP قبلی از قبل باطل شده بود.
+2. OTP جدیدی که هرگز به کاربر نرسیده بود در DB باقی می‌ماند.
+3. همان رکورد می‌توانست cooldown/rate limit را فعال کند.
+
+### اصلاح
+ترتیب جدید:
+
+`generate → send SMS → invalidate previous → persist new OTP`
+
+فقط OTPای که send آن موفق بوده وارد چرخه Verify می‌شود.
+
+### Kavenegar
+در `KavenegarService` پارامتر `type=sms` به Verify Lookup اضافه شد تا channel به‌صورت صریح SMS باشد.
+
+### Server-side verification
+OTP خام در DB ذخیره نمی‌شود. `code_hash` با HMAC-SHA256 نگهداری و با `hash_equals()` مقایسه می‌شود. این همان نیاز «سمت سرور باید بتواند کد را بررسی کند» را بدون نگهداری plaintext برآورده می‌کند.
+
+### Configuration
+
+- `KAVENEGAR_API_KEY`
+- `KAVENEGAR_OTP_TEMPLATE`
+- `OTP_PEPPER`
+
+### Validation
+Schema واقعی `otp_verifications`، endpointها و UI بررسی شدند. تست SMS واقعی به API Key و Template واقعی محیط اجرا وابسته است و در این مرحله ادعا نشده است.
+
+---
+
+## MCC-CHANGE-005 — حذف session_start تکراری از AI JSON endpoint
+
+### تاریخ
+2026-10-15
+
+### مسئله
+کاربر گزارش کرده بود اولین درخواست AI کار نمی‌کند.
+
+### Root Cause واقعی پیدا شده
+`config/config.php` از قبل Session را start می‌کند. با این حال `public/ai-qa-ask.php` دوباره `session_start()` اجرا می‌کرد.
+
+در محیطی که `display_errors` روشن باشد، PHP می‌تواند Notice مربوط به session فعال را قبل از JSON چاپ کند. Frontend با `res.json()` پاسخ را parse می‌کند؛ بنابراین متن اضافی قبل از JSON می‌تواند درخواست را ظاهراً fail کند.
+
+### تغییر
+`session_start()` اضافی از `ai-qa-ask.php` حذف شد و Bootstrap مرکزی تنها محل start session باقی ماند.
+
+### Validation
+رفتار duplicate `session_start()` در PHP بازتولید شد و Notice مربوط به session فعال مشاهده شد. Endpoint نهایی از `main` بازخوانی شد.
+
+### محدودیت
+بدون اجرای Browser/Server واقعی ادعا نمی‌شود این تنها علت تمام موارد «اولین درخواست» بوده است؛ اما یک defect قطعی از مسیر JSON حذف شد.
+
+---
+
+## MCC-CHANGE-006 — ذخیره پایدار AI Conversation و Message در دیتابیس
+
+### تاریخ
+2026-10-15
+
+### مسئله
+قبل از این Change، history فقط در `$_SESSION['ai_chat_history']` بود و هیچ جدول persistent برای سؤال/پاسخ AI در Dump واقعی وجود نداشت.
+
+### Migration جدید
+
+`database/migrations/20261015_001_create_ai_conversations.sql`
+
+### جدول `ai_conversations`
+
+- `id`
+- `user_id` nullable
+- `session_key` unique
+- `created_at`
+- `updated_at`
+
+`user_id` به `users.id` وصل است. nullable بودن باعث می‌شود مهمان نیز conversation داشته باشد.
+
+### جدول `ai_messages`
+
+- `id`
+- `conversation_id`
+- `role` = user / assistant
+- `content`
+- `model`
+- `created_at`
+
+### Repository جدید
+
+`app/Repositories/AiConversationRepository.php`
+
+متدها:
+
+- `getOrCreateConversation()`
+- `addMessage()`
+
+اگر conversation در حالت guest ساخته شده و همان session بعداً Login شود، `user_id` به conversation موجود متصل می‌شود.
+
+### Endpoint
+`public/ai-qa-ask.php` اکنون سؤال user و پاسخ assistant را در DB ذخیره می‌کند و history session را نیز برای Context کوتاه‌مدت حفظ می‌کند.
+
+### رفتار Fail-safe
+اگر Migration هنوز روی محیطی اجرا نشده باشد، خطای DB log می‌شود ولی پاسخ AI متوقف نمی‌شود.
+
+### Validation
+Schema migration با MariaDB 10.4 و نوع `users.id` تطبیق داده شد. Syntax Repository و endpoint بررسی شد. Migration روی دیتابیس واقعی پروژه هنوز از این محیط اجرا نشده است.
+
+---
+
+## MCC-CHANGE-007 — تکمیل Child RAG، Domain Detection و هماهنگ‌سازی LLM Prompt
+
+### تاریخ
+2026-10-15
+
+### درخواست / مسئله
+در درخواست اولیه علاوه بر Pregnancy، بخش کودک/نوزاد و اتصال آن به RAG خواسته شده بود. Dump واقعی نشان داد چند جدول کودک وجود دارند اما Retriever فقط `development_milestones` و `growth_standards` را استفاده می‌کرد.
+
+### منابع واقعی اضافه‌شده به RAG
+
+چهار جدول موجود دیتابیس به Retrieval اضافه شدند:
+
+1. `child_nutrition`
+2. `child_supplements`
+3. `common_conditions`
+4. `vaccination_schedule`
+
+این جداول قبلاً داده داشتند ولی AI از آن‌ها استفاده نمی‌کرد.
+
+### تغییر در Repository
+`AiKnowledgeRepository` فقط Data Access جدید اضافه کرد:
+
+- `findChildNutritionByAge()`
+- `findChildNutritionByKeywords()`
+- `findChildSupplementsByAge()`
+- `findChildSupplementsByKeywords()`
+- `findCommonConditions()`
+- `findVaccinationsByAge()`
+- `findVaccinationsByKeywords()`
+
+تفکیک Phase 1 حفظ شد؛ formatting و ranking وارد Repository نشد.
+
+### Age-aware Retrieval
+اگر سؤال سن کودک را مشخص کند، برای nutrition/supplement/vaccination/milestone ابتدا Query سن‌محور اجرا می‌شود. اگر سن وجود نداشته باشد، keyword search fallback است.
+
+### اصلاح Native PDO Placeholder
+`Database.php` مقدار زیر را دارد:
+
+`PDO::ATTR_EMULATE_PREPARES => false`
+
+در native prepared statements نباید یک named placeholder چند بار reuse شود. چند Query سن‌محور مثل این الگو داشتند:
+
+`age_start <= :age AND age_end >= :age`
+
+این ساختار به placeholderهای مستقل تبدیل شد، مانند:
+
+`age_start <= :age_start AND age_end >= :age_end`
+
+همین اصلاح برای nutrition، child supplements، vaccination و milestones اعمال شد.
+
+### Domain Detection
+بعد از اضافه‌شدن منابع کودک، سقف ۱۲ Context Block می‌توانست باعث شود منابع کودک برای سؤال بارداری بی‌جهت جای منابع مرتبط را بگیرند.
+
+به `QueryPreprocessor::analyze()` فیلد `domain` اضافه شد:
+
+- `pregnancy`
+- `child`
+- `general`
+
+Markerهای ساده و قابل توضیح برای بارداری و کودک استفاده می‌شوند؛ Vector/Classifer جدیدی اضافه نشد.
+
+### رفع ابهام سن
+عبارتی مثل «سه ماهه بارداری» قبلاً ممکن بود توسط age parser به «کودک ۳ ماهه» تعبیر شود. اکنون اگر Domain سؤال pregnancy باشد، `age_months` کودک تولید نمی‌شود.
+
+### Keyword/Synonym تکمیلی
+در حد نیاز همین Domain، synonymهای زیر اضافه/تکمیل شدند:
+
+- نوزاد ↔ شیرخوار
+- کودک ↔ بچه
+- واکسن ↔ واکسیناسیون
+- چند spelling رایج برای علائم موجود
+
+### Prioritization منابع
+
+- سؤال `child` → منابع کودک، سپس FAQ/Article
+- سؤال `pregnancy` → منابع بارداری، سپس FAQ/Article
+- سؤال `general` → FAQ/Article، سپس child و pregnancy
+
+سقف ۱۲ block حفظ شد.
+
+### LLM Prompt
+`LlmService` قبلاً خود را عمدتاً دستیار بارداری معرفی می‌کرد. Prompt با منابع واقعی RAG هماهنگ شد تا حوزه‌های زیر را نیز پوشش دهد:
+
+- نوزاد و کودک
+- رشد و تکامل
+- تغذیه کودک
+- واکسیناسیون
+- مکمل‌ها
+- بیماری‌های شایع کودک
+
+همچنین به مدل گفته شد منابع pregnancy و child را با هم مخلوط نکند و Context نامرتبط را وارد پاسخ نکند.
+
+### فایل‌های تغییرکرده
+
+- `app/Repositories/AiKnowledgeRepository.php`
+- `app/Services/KnowledgeRetriever.php`
+- `app/Services/QueryPreprocessor.php`
+- `app/Services/LlmService.php`
+
+### دیتابیس
+در این Change هیچ Schema جدیدی ساخته نشد؛ فقط از جدول‌هایی که از قبل در Dump واقعی وجود داشتند استفاده شد.
+
+### Validation
+
+- ستون‌های چهار جدول از Dump واقعی بررسی شدند و Queryها دقیقاً با همان Schema نوشته شدند.
+- native PDO placeholderهای تکراری شناسایی و به نام‌های مستقل تبدیل شدند.
+- مرز Repository/Service دوباره بررسی شد و Repository همچنان Data Access-only باقی مانده است.
+- تست End-to-End Query علیه MariaDB واقعی از این محیط قابل اجرا نیست؛ این محدودیت ثبت می‌شود و موفقیت runtime DB در این Change ادعا نمی‌شود.
+
+### نتیجه نهایی
+RAG اکنون علاوه بر Pregnancy به داده‌های واقعی کودک/نوزاد موجود در دیتابیس دسترسی دارد، Queryها بر اساس Domain اولویت‌بندی می‌شوند و Prompt مدل نیز با همین دامنه هماهنگ است.
+
+---
+
+## MCC-CHANGE-008 — شروع فاز محتوا: انتخاب CDC و ایجاد Crawler واقعی Developmental Milestones
+
+### تاریخ
+2026-10-15
+
+### درخواست / مسئله
+در درخواست اولیه لازم بود بخش نوزاد/کودک با استفاده از یک منبع معتبر تکمیل شود و داده منبع واقعاً از طریق crawler دریافت شود. همچنین crawler code/export باید در پروژه وجود داشته باشد.
+
+### وضعیت قبل
+پروژه داده‌های کودک در DB داشت اما Crawler قابل اجرا برای منبع معتبر و Export قابل ردیابی داخل Repository وجود نداشت. صفحات Pregnancy در `public/` وجود دارند، اما Child section هم‌سطح آن هنوز کامل نشده است.
+
+### انتخاب منبع
+منبع اولیه برای Developmental Milestones:
+
+`Centers for Disease Control and Prevention (CDC) — Learn the Signs. Act Early.`
+
+دلیل انتخاب:
+
+1. منبع رسمی سلامت عمومی است.
+2. milestoneهای کودک را به تفکیک سن از ۲ ماه تا ۵ سال منتشر می‌کند.
+3. صفحات source تاریخ update/review دارند.
+4. robots.txt مسیر `/act-early/milestones/` را منع نکرده است.
+5. CDC اعلام می‌کند بیشتر محتوای متنی سایت public domain است، ولی Attribution و Non-endorsement باید رعایت شوند.
+
+### محدودیت استفاده از Assets
+Crawler فقط متن milestone را می‌گیرد. تصویر و ویدئو عمداً دانلود نمی‌شوند؛ زیرا CDC تصریح می‌کند بعضی تصاویر/assetها ممکن است copyright مستقل داشته باشند.
+
+### فایل جدید
+
+`tools/crawlers/cdc_milestones.php`
+
+### سن‌های Crawl
+
+- 2 ماه
+- 4 ماه
+- 6 ماه
+- 9 ماه
+- 12 ماه
+- 15 ماه
+- 18 ماه
+- 24 ماه
+- 30 ماه
+- 36 ماه
+- 48 ماه
+- 60 ماه
+
+### دسته‌بندی‌های Source
+Crawler headingهای CDC را به دسته خام تبدیل می‌کند:
+
+- `social_emotional`
+- `language_communication`
+- `cognitive`
+- `movement_physical`
+
+در این مرحله این categoryها مستقیم به enum دیتابیس تبدیل نمی‌شوند، چون mapping نهایی به `milestone_type` نیازمند بازبینی محتوایی است؛ برای مثال یک milestone حرکتی ممکن است fine motor یا gross motor باشد.
+
+### Export JSON
+به‌صورت پیش‌فرض فایل زیر ایجاد می‌شود:
+
+`storage/crawlers/cdc_milestones_YYYYmmdd_His.json`
+
+Metadata Export شامل:
+
+- source name
+- source pages
+- crawled_at
+- attribution
+- non-endorsement notice
+- records_count
+
+هر record شامل:
+
+- `source_name`
+- `source_url`
+- `age_months`
+- `source_category`
+- `milestone_text_en`
+
+### چرا Crawler مستقیم INSERT نمی‌کند؟
+CDC انگلیسی است و دیتابیس/رابط پروژه فارسی است. اگر Crawler مستقیماً INSERT کند، Raw Source انگلیسی وارد داده محصول می‌شود.
+
+مسیر صحیح این فاز:
+
+`CDC → Raw Crawler Export → ترجمه/بازبینی → Import → development_milestones`
+
+این جداسازی برای خود Feature crawler لازم است و یک معماری اضافه خارج از Scope نیست؛ چون باید provenance منبع و داده نهایی فارسی از هم قابل تشخیص باشند.
+
+### مستند اجرا
+فایل زیر اضافه شد:
+
+`tools/crawlers/README.md`
+
+شامل:
+
+- دلیل انتخاب CDC
+- نحوه اجرا
+- PHP extensionهای لازم (`curl`, `dom`)
+- فرمت Export
+- Attribution
+- توضیح اینکه تصویر/ویدئو Crawl نمی‌شوند
+
+### رفتار Crawler
+
+- فقط از CLI اجرا می‌شود.
+- HTTP status و cURL error را بررسی می‌کند.
+- بین درخواست‌ها delay قرار می‌دهد.
+- milestoneها را از H3های دسته‌بندی و List Itemها استخراج می‌کند.
+- noiseهای navigation/download حذف می‌شوند.
+- رکوردهای تکراری در هر Export deduplicate می‌شوند.
+
+### Validation
+
+- صفحات فعلی CDC Milestones برای ۲ ماه تا ۵ سال بررسی شدند و ساختار سنی منبع تأیید شد.
+- صفحه نمونه ۲ ماه دسته‌های Social/Emotional، Language/Communication، Cognitive و Movement/Physical را نمایش می‌دهد و طراحی parser بر همان ساختار واقعی انجام شد.
+- robots.txt فعلی CDC بررسی شد و مسیر source در Disallowهای عمومی نیست.
+- سیاست رسمی CDC برای reuse بررسی شد؛ Attribution و non-endorsement در Export/README ثبت شده است.
+- Crawler از داخل این محیط روی شبکه واقعی اجرا نشده است؛ بنابراین فایل Export واقعی هنوز تولید و commit نشده و موفقیت runtime crawl ادعا نمی‌شود.
+
+### Rollback
+حذف دو فایل زیر تمام اثر runtime این Change را برمی‌گرداند؛ هیچ DB schema یا داده اصلی در این Change تغییر نکرده است:
+
+- `tools/crawlers/cdc_milestones.php`
+- `tools/crawlers/README.md`
+
+### نتیجه نهایی
+پروژه اکنون Crawler مستقل و قابل اجرا برای یک منبع پزشکی معتبر دارد و خروجی Raw آن provenance کامل برای مرحله ترجمه/بازبینی و Import آینده نگه می‌دارد.
+
+---
+
+## MCC-CHANGE-009 — تکمیل Error Handling رسمی Kavenegar Verify Lookup
+
+### تاریخ
+2026-10-15
+
+### درخواست / مسئله
+بعد از بررسی مستند رسمی REST کاوه‌نگار مشخص شد Integration از endpoint صحیح `verify/lookup` استفاده می‌کند، اما `KavenegarService::sendOtp()` فقط `true/false` برمی‌گرداند و تمام خطاهای Provider برای `AuthService` یکسان دیده می‌شوند.
+
+این باعث می‌شد خطاهای متفاوتی مثل API Key نامعتبر، اعتبار ناکافی، Template اشتباه یا تاییدنشده، فعال نبودن سرویس پیشرفته، ساختار نامعتبر token و اختلال موقت API همگی با یک پیام عمومی نمایش داده شوند.
+
+### وضعیت قبل
+
+`KavenegarService::sendOtp()`:
+
+- HTTP request را اجرا می‌کرد.
+- `return.status=200` را Success می‌دانست.
+- در هر خطای دیگر فقط `false` برمی‌گرداند.
+- روی خطای API کل response را در log می‌نوشت.
+
+`AuthService` فقط می‌توانست تشخیص دهد «ارسال موفق بود یا نبود».
+
+### مبنای رسمی
+طبق مستند رسمی Kavenegar REST:
+
+- endpoint اعتبارسنجی: `verify/lookup.json`
+- `receptor`، `token` و `template` پارامترهای اصلی هستند.
+- `type=sms` برای ارسال متنی معتبر است و SMS مقدار پیش‌فرض نیز هست.
+- `return.status=200` نشان‌دهنده موفقیت است.
+- خطاهای اختصاصی Verify Lookup شامل `418`, `422`, `424`, `426`, `428`, `431`, `432`, `607` هستند.
+- خطاهای عمومی Account/API مثل `401`, `403`, `409`, `429`, `451` نیز ممکن است رخ دهند.
+
+### تغییر `KavenegarService`
+Return type از `bool` به نتیجه ساختاریافته تبدیل شد:
+
+```text
+success
+status
+message
+transport_error (در خطای ارتباطی)
+```
+
+حالت‌های جداگانه اکنون قابل تشخیص‌اند:
+
+1. Dev mode بدون API Key.
+2. cURL/Transport failure.
+3. پاسخ JSON نامعتبر.
+4. HTTP/API error.
+5. Success با `status=200`.
+
+### Logging
+در نسخه قبلی روی failure کل response Provider log می‌شد. این رفتار حذف شد.
+
+اکنون فقط موارد زیر ثبت می‌شوند:
+
+- HTTP status
+- Kavenegar return status
+- Kavenegar return message
+
+دلیل: response ممکن است شامل receptor، متن پیام یا OTP باشد و ثبت کامل آن برای عیب‌یابی لازم نیست.
+
+### تغییر `AuthService`
+`requestOtp()` اکنون نتیجه ساختاریافته Provider را دریافت می‌کند.
+
+خطاهای Provider به پیام‌های قابل فهم تبدیل می‌شوند، از جمله:
+
+- `401/403` → تنظیمات یا دسترسی سرویس معتبر نیست.
+- `411` → شماره توسط Provider معتبر تشخیص داده نشد.
+- `418` → اعتبار سرویس کافی نیست.
+- `424` → Template وجود ندارد یا هنوز تایید نشده است.
+- `426` → Verify Lookup/سرویس پیشرفته روی حساب فعال نیست.
+- `409/429/451` → مشکل موقت یا محدودیت سرویس.
+- `422/431/432` → تنظیمات Token/Template نیاز به بررسی دارد.
+
+API Key یا اطلاعات Secret در پاسخ UI قرار نمی‌گیرند.
+
+### Workflow OTP بعد از تغییر
+Workflow قبلی Change 004 حفظ شد:
+
+`generate → Kavenegar send → if success: invalidate previous → persist new OTP`
+
+بنابراین Provider error هنوز باعث ایجاد OTP ارسال‌نشده یا خراب‌شدن OTP قبلی نمی‌شود.
+
+### فایل‌های تغییرکرده
+
+- `app/Services/KavenegarService.php`
+- `app/Services/AuthService.php`
+- `docs/CHANGE_LOG.md`
+- `docs/IMPLEMENTATION_ROADMAP.md`
+
+### Validation
+
+- مستند رسمی `https://kavenegar.com/rest.html` برای Verify Lookup دوباره بررسی شد.
+- endpoint، پارامترهای `receptor/token/template/type` و success status رسمی با کد تطبیق داده شدند.
+- `KavenegarService` و `AuthService` بعد از Update از `main` بازخوانی شدند و قرارداد `sendOtp(): array` در caller نیز به‌روزرسانی شده است.
+- Success فقط با `status=200` پذیرفته می‌شود.
+- در Provider failure هیچ `invalidateActiveForPhone()` یا `create()` اجرا نمی‌شود.
+- تست End-to-End ارسال واقعی هنوز به `KAVENEGAR_API_KEY`، Template تاییدشده و حساب واقعی Kavenegar نیاز دارد و در این محیط انجام نشده است.
+
+### Rollback
+برای Rollback باید `KavenegarService::sendOtp()` به قرارداد boolean و `AuthService::requestOtp()` به بررسی boolean برگردد. Schema دیتابیس در این Change تغییر نکرده است.
+
+### نتیجه نهایی
+فاز OTP از نظر Integration کد اکنون با ساختار رسمی Kavenegar REST سازگارتر است و خطاهای اصلی Provider قابل تشخیص و عیب‌یابی‌اند، بدون اینکه Token/API Key یا response کامل سرویس در UI یا log افشا شود.
+
+---
+
+## MCC-CHANGE-010 — تکمیل Child/Infant UI و Importer محتوای بازبینی‌شده
+
+### تاریخ
+2026-10-15
+
+### درخواست / مسئله
+در Header پروژه منوی «کودک» از قبل پنج لینک داشت، اما فایل‌های مقصد وجود نداشتند و کاربر عملاً با 404 مواجه می‌شد. همچنین Crawler CDC Raw Export تولید می‌کرد ولی مرحله Import محتوای ترجمه/بازبینی‌شده هنوز پیاده‌سازی نشده بود.
+
+### وضعیت قبل
+
+- `growth.php` وجود نداشت.
+- `vaccine.php` وجود نداشت.
+- `child-nutrition.php` وجود نداشت.
+- `milestones.php` وجود نداشت.
+- `conditions.php` وجود نداشت.
+- برای nutrition/supplement/vaccination/conditions Repository صفحه‌محور مستقلی وجود نداشت.
+- مسیر `CDC → Raw JSON → Reviewed Persian → DB` در مرحله Import ناقص بود.
+
+### تغییرات
+
+#### Data Access
+فایل `app/Repositories/ChildCareRepository.php` اضافه شد و فقط Data Access جداول زیر را انجام می‌دهد:
+
+- `child_nutrition`
+- `child_supplements`
+- `vaccination_schedule`
+- `common_conditions`
+
+Repositoryهای موجود `GrowthStandardRepository` و `DevelopmentMilestoneRepository` دوباره استفاده شدند و SQL آن‌ها تکرار نشد.
+
+#### UI
+پنج صفحه‌ای که Header از قبل به آن‌ها لینک می‌داد ساخته شدند:
+
+- `public/growth.php`
+- `public/vaccine.php`
+- `public/child-nutrition.php`
+- `public/milestones.php`
+- `public/conditions.php`
+
+صفحات سن‌محور Query Parameter را به بازه مجاز محدود می‌کنند و تمام متن DB با `htmlspecialchars` نمایش داده می‌شود.
+
+صفحه تغذیه علاوه بر stage غذایی، مکمل‌های مرتبط با همان سن را نیز از جدول واقعی `child_supplements` نمایش می‌دهد.
+
+CSS مشترک `public/assets/css/pages/child-care.css` اضافه شد تا صفحات Child بدون کپی چندباره Style پایه مشترک داشته باشند.
+
+#### Importer
+فایل `tools/crawlers/import_cdc_milestones.php` اضافه شد.
+
+Importer فقط Reviewed JSON با فیلدهای فارسی را قبول می‌کند و این موارد را Validate می‌کند:
+
+- `milestone_name_fa`
+- `description_fa`
+- category مجاز طبق enum واقعی DB
+- milestone_type مجاز طبق enum واقعی DB
+- بازه سن
+- CDC source URL
+
+دو حالت دارد:
+
+`--dry-run` → فقط Validation، بدون تغییر DB.
+
+اجرای بدون dry-run → Import داخل Transaction، با duplicate check و Rollback در خطا.
+
+### Before → After
+
+**Before:** منوی Child ظاهراً وجود داشت ولی لینک‌ها عملاً مرده بودند و Crawler فقط Raw Export داشت.
+
+**After:** Child section صفحات واقعی متصل به DB دارد و Pipeline محتوا تا Reviewed Import تکمیل شده است.
+
+### Validation
+
+- وجود لینک‌های Child در Header بررسی شد.
+- نبود فایل‌های مقصد با پاسخ 404 تأیید شد.
+- Schemaهای واقعی Child از Dump مبنای Queryها قرار گرفتند.
+- enumهای `development_milestones` مستقیماً از Dump برای Importer استفاده شدند.
+- فایل‌های جدید بعد از Commit از `main` بازخوانی شدند.
+- اجرای Browser/DB واقعی این صفحات و اجرای Import واقعی در این محیط انجام نشده است؛ بنابراین Runtime Success روی سرور واقعی هنوز باید Validate شود.
+
+### Rollback
+حذف صفحات Child، CSS، `ChildCareRepository` و Importer اثر این Change را برمی‌گرداند. Schema دیتابیس تغییر نکرده است.
+
+### نتیجه نهایی
+منوی Child اکنون به صفحات واقعی متصل است و مسیر Crawler از Raw Source تا Import کنترل‌شده محتوای فارسی کامل شده است.
+
+---
+
+## MCC-CHANGE-011 — حذف تبلیغات گهواره از HTML مقالات
+
+### تاریخ
+2026-10-15
+
+### درخواست / مسئله
+کاربر صریحاً خواسته بود تبلیغات گهواره از مقالات Crawl‌شده حذف شوند؛ شامل CTA نصب اپ، تصاویر تبلیغاتی و بلوک‌های تبلیغی، در حالی که HTML محتوایی مقاله حفظ شود.
+
+### شواهد از دیتابیس واقعی
+در Dump واقعی صدها occurrence از «گهواره» و تعداد زیادی occurrence از «نصب اپلیکیشن» وجود دارد. نمونه واقعی شامل این الگوها بود:
+
+- `id="install-inline"`
+- `gahvare.net/landing?...`
+- متن `نصب اپلیکیشن گهواره`
+- بلوک `hidden-lg hidden-md` با phone mockup
+- تصویر `gahvare.net/assets/images/home_screen/...`
+- `id="install-screenshot"`
+- لینک `/i/...?...article_app_screen`
+
+در همان مقاله لینک‌های محتوایی عادی به `gahvare.net/articles/...` نیز وجود داشتند؛ بنابراین حذف تمام لینک‌های دامنه گهواره صحیح نبود.
+
+### طراحی
+فایل `app/Services/ArticleContentSanitizer.php` ایجاد شد.
+
+Sanitizer به‌صورت هدفمند موارد زیر را حذف می‌کند:
+
+- شناسه‌های تبلیغاتی `install-inline` و `install-screenshot`
+- install/landing URLهای گهواره
+- CTAهای متنی نصب/دانلود اپلیکیشن گهواره
+- تصاویر app/home-screen گهواره
+- بلوک‌های کوچک محلی که صریحاً promotional copy اپلیکیشن دارند
+
+اما لینک‌های عادی `gahvare.net/articles/...` به‌عنوان محتوای مقاله کورکورانه حذف نمی‌شوند.
+
+### جلوگیری از حذف بیش‌ازحد
+در Validation مشخص شد wrapper بزرگ DOM نیز می‌تواند متن تبلیغاتی را در `textContent` خود داشته باشد. برای جلوگیری از حذف کل Article:
+
+- wrapper اصلی صریحاً از حذف مستثنی شد.
+- heuristic متنی فقط روی بلوک‌های محلی حداکثر ۶۰۰ کاراکتر اعمال می‌شود.
+- بالا رفتن در DOM قبل از `article/body/html/root` متوقف می‌شود.
+
+### نمایش مقاله
+`public/article.php` اکنون قبل از Security Sanitization فعلی، `ArticleContentSanitizer` را اجرا می‌کند. همچنین excerpt مقالات مرتبط نیز از محتوای پاک‌شده ساخته می‌شود.
+
+این یعنی حتی قبل از اجرای Cleanup دائمی DB، CTA تبلیغاتی شناخته‌شده نباید در صفحه Article نمایش داده شود.
+
+### Cleanup دائمی DB
+به `ArticleRepository` فقط متدهای Data Access زیر اضافه شدند:
+
+- `allForContentCleanup()`
+- `updateContent()`
+
+Business Logic پاک‌سازی وارد Repository نشده است.
+
+ابزار زیر ایجاد شد:
+
+`tools/cleanup_gahvare_article_ads.php`
+
+حالت‌ها:
+
+```bash
+php tools/cleanup_gahvare_article_ads.php --dry-run
+php tools/cleanup_gahvare_article_ads.php --apply
+```
+
+Dry Run تعداد Articleهای نیازمند تغییر و اندازه قبل/بعد را نمایش می‌دهد ولی DB را تغییر نمی‌دهد.
+
+`--apply` تغییرات را داخل Transaction ذخیره می‌کند و در خطا Rollback انجام می‌دهد.
+
+### Before → After
+
+**Before:** HTML تبلیغ گهواره داخل `articles.content` ذخیره و توسط صفحه Article نمایش داده می‌شد.
+
+**After:** نمایش مقاله Sanitizer اختصاصی دارد و ابزار مستقل برای حذف دائمی تبلیغ از رکوردهای فعلی DB وجود دارد.
+
+### Validation
+
+- الگوهای Sanitizer از HTML واقعی Dump استخراج شدند، نه بر اساس حدس.
+- تفاوت بین لینک محتوایی و لینک install/landing در طراحی رعایت شد.
+- edge case حذف wrapper بزرگ Article شناسایی و قبل از نهایی‌سازی اصلاح شد.
+- Service و callerها بعد از Commit از `main` بازخوانی شدند.
+- Cleanup `--apply` روی DB واقعی از این محیط اجرا نشده است؛ بنابراین تعداد واقعی رکوردهای تغییرکرده هنوز باید با Dry Run روی سرور مشخص شود.
+
+### Rollback
+
+- برای Runtime display: حذف استفاده از `ArticleContentSanitizer` در `article.php`.
+- برای Cleanup Tool: حذف `tools/cleanup_gahvare_article_ads.php` و متدهای cleanup Repository.
+- اگر Cleanup روی DB واقعی اجرا شده باشد، Rollback داده‌ای نیازمند Backup/Export قبل از Apply است؛ ابزار عمداً Dry Run را به‌عنوان قدم اول ارائه می‌دهد.
+
+### نتیجه نهایی
+فاز حذف تبلیغات گهواره در کد پیاده‌سازی شده است؛ باقی‌مانده فقط اجرای Dry Run/Apply و Validation روی دیتابیس و Browser محیط واقعی است.
+
+---
+
+## وضعیت ادامه کار
+
+بعد از MCC-CHANGE-011:
+
+- Phase 1 انجام شده است.
+- Phase 2 از نظر کد انجام شده؛ تست واقعی SMS وابسته به Kavenegar credential است.
+- Phase 3 بخش اصلی انجام شده؛ Migration AI و E2E باید روی محیط واقعی اجرا شوند.
+- Phase 4 کد Crawler/Importer و Child UI انجام شده؛ Crawl/Import/Browser Validation واقعی باقی مانده است.
+- Phase 5 کد Sanitizer/Cleanup انجام شده؛ Dry Run و Apply روی DB واقعی باقی مانده است.
+- Phase 6 مرحله بعد توسعه است: Profile، User Data، Logging و Personalization.
